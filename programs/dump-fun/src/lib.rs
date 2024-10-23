@@ -22,11 +22,12 @@ pub mod dump_fun {
     pub fn initialize(ctx: Context<Initialize>, params: InitParams) -> Result<()> {
         let global = &mut ctx.accounts.global;
 
+        global.initailized = true;
+        global.authority = params.authority;
         global.fee_recipient = params.fee_recipient;
         global.initial_virtual_token_reserves = params.initial_virtual_token_reserves;
         global.initial_virtual_sol_reserves = params.initial_virtual_sol_reserves;
         global.initial_real_token_reserves = params.initial_real_token_reserves;
-        global.initial_real_sol_reserves = params.initial_real_sol_reserves;
         global.total_token_supply = params.total_token_supply;
         global.fee_basis_points = params.fee_basis_points;
 
@@ -35,7 +36,6 @@ pub mod dump_fun {
             initial_virtual_token_reserves: params.initial_virtual_token_reserves,
             initial_virtual_sol_reserves: params.initial_virtual_sol_reserves,
             initial_real_token_reserves: params.initial_real_token_reserves,
-            initial_real_sol_reserves: params.initial_real_sol_reserves,
             total_token_supply: params.total_token_supply,
             fee_basis_points: params.fee_basis_points
         });
@@ -99,27 +99,10 @@ pub mod dump_fun {
 
         msg!("Token reserve minted successfully.");
 
-        let from_account = &ctx.accounts.payer;
-        let to_account = &ctx.accounts.associated_bonding_curve;
-
-        let transfer_instruction = system_instruction::transfer(from_account.key, &to_account.key(), global.initial_real_sol_reserves);
-
-        anchor_lang::solana_program::program::invoke_signed(
-            &transfer_instruction,
-            &[
-                from_account.to_account_info(),
-                to_account.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-            &[],
-        )?;
-
-        msg!("SOL reserve transferred successfully.");
-
         bonding_curve.virtual_token_reserves = global.initial_virtual_token_reserves;
         bonding_curve.virtual_sol_reserves = global.initial_virtual_sol_reserves;
         bonding_curve.real_token_reserves = global.initial_real_token_reserves;
-        bonding_curve.real_sol_reserves = global.initial_real_sol_reserves;
+        bonding_curve.real_sol_reserves = 0;
         bonding_curve.total_token_supply = global.total_token_supply;
         bonding_curve.target = params.target;
         bonding_curve.complete = false;
@@ -198,11 +181,21 @@ pub mod dump_fun {
             virtual_sol_reserves: bonding_curve.virtual_sol_reserves
         });
 
+        if bonding_curve.real_sol_reserves >= bonding_curve.target {
+            emit!(CompleteEvent{
+                mint: ctx.accounts.mint.key(),
+                user: ctx.accounts.payer.key(),
+                bonding_curve: ctx.accounts.bonding_curve.key(),
+                timestamp: timestamp
+            })
+        }
+
         Ok(())
     }
 
     pub fn sell(ctx: Context<Sell>, params: SellParams) -> Result<()> {
         let bonding_curve = &mut ctx.accounts.bonding_curve;
+        require_gt!(bonding_curve.real_sol_reserves, 0);
 
         let from_account = &ctx.accounts.associated_bonding_curve;
         let to_account = &ctx.accounts.payer;
@@ -260,6 +253,15 @@ pub mod dump_fun {
             virtual_token_reserves: bonding_curve.virtual_token_reserves,
             virtual_sol_reserves: bonding_curve.virtual_sol_reserves
         });
+
+        if bonding_curve.real_sol_reserves >= bonding_curve.target {
+            emit!(CompleteEvent{
+                mint: ctx.accounts.mint.key(),
+                user: ctx.accounts.payer.key(),
+                bonding_curve: ctx.accounts.bonding_curve.key(),
+                timestamp: timestamp
+            })
+        }
 
         Ok(())
     }
@@ -372,11 +374,12 @@ pub struct Sell<'info> {
 
 #[account]
 pub struct Global {
+    initailized: bool,
+    authority: Pubkey,
     fee_recipient: Pubkey,
     initial_virtual_token_reserves: u64,
     initial_virtual_sol_reserves: u64,
     initial_real_token_reserves: u64,
-    initial_real_sol_reserves: u64,
     total_token_supply: u64,
     fee_basis_points: u64
 }
@@ -394,11 +397,11 @@ pub struct BondingCurve {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
 pub struct InitParams {
+    authority: Pubkey,
     fee_recipient: Pubkey,
     initial_virtual_token_reserves: u64,
     initial_virtual_sol_reserves: u64,
     initial_real_token_reserves: u64,
-    initial_real_sol_reserves: u64,
     total_token_supply: u64,
     fee_basis_points: u64
 }
@@ -429,7 +432,6 @@ pub struct InitEvent {
     initial_virtual_token_reserves: u64,
     initial_virtual_sol_reserves: u64,
     initial_real_token_reserves: u64,
-    initial_real_sol_reserves: u64,
     total_token_supply: u64,
     fee_basis_points: u64
 }
@@ -454,6 +456,14 @@ pub struct TradeEvent {
     timestamp: i64,
     virtual_token_reserves: u64,
     virtual_sol_reserves: u64
+}
+
+#[event]
+pub struct CompleteEvent {
+    mint: Pubkey,
+    user: Pubkey,
+    bonding_curve: Pubkey,
+    timestamp: i64
 }
 
 impl Space for Global {
