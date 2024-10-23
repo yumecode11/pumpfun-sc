@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::{mint_to, Mint, MintTo, Token, TokenAccount},
+    token::{mint_to, Mint, MintTo, Token, TokenAccount, Transfer as SplTransfer},
     metadata::{
         create_metadata_accounts_v3,
         mpl_token_metadata::types::DataV2,
@@ -9,8 +9,9 @@ use anchor_spl::{
         Metadata as Metaplex,
     },
 };
-use anchor_lang::solana_program::system_instruction;
+use anchor_lang::solana_program::{clock::Clock, system_instruction};
 use program::DumpFun;
+use anchor_spl::token;
 
 declare_id!("3UQnAcGLoi8cpi9LkiJdjDnmkiW2n3LxgSosD9Cecs5P");
 
@@ -29,7 +30,7 @@ pub mod dump_fun {
         global.total_token_supply = params.total_token_supply;
         global.fee_basis_points = params.fee_basis_points;
 
-        emit!(InitGlobalParamsEvent{
+        emit!(InitEvent{
             fee_recipient: params.fee_recipient,
             initial_virtual_token_reserves: params.initial_virtual_token_reserves,
             initial_virtual_sol_reserves: params.initial_virtual_sol_reserves,
@@ -47,11 +48,12 @@ pub mod dump_fun {
         let signer = [&seeds[..]];
 
         let global = &mut ctx.accounts.global;
+        let bonding_curve = &mut ctx.accounts.bonding_curve;
 
         let token_data: DataV2 = DataV2 {
-            name: params.name,
-            symbol: params.symbol,
-            uri: params.uri,
+            name: params.name.clone(),
+            symbol: params.symbol.clone(),
+            uri: params.uri.clone(),
             seller_fee_basis_points: 0,
             creators: None,
             collection: None,
@@ -114,8 +116,6 @@ pub mod dump_fun {
 
         msg!("SOL reserve transferred successfully.");
 
-        let bonding_curve = &mut ctx.accounts.bonding_curve;
-
         bonding_curve.virtual_token_reserves = global.initial_virtual_token_reserves;
         bonding_curve.virtual_sol_reserves = global.initial_virtual_sol_reserves;
         bonding_curve.real_token_reserves = global.initial_real_token_reserves;
@@ -124,12 +124,145 @@ pub mod dump_fun {
         bonding_curve.target = params.target;
         bonding_curve.complete = false;
 
+        msg!("Bonding curve initialized.");
+
+        emit!(CreateEvent{
+            name: params.name,
+            symbol: params.symbol,
+            uri: params.uri,
+            mint: ctx.accounts.mint.key(),
+            bonding_curve: ctx.accounts.bonding_curve.key(),
+            user: ctx.accounts.payer.key()
+        });
+
         Ok(())
     }
 
-    // pub fn buy(ctx: Context<Create>, params: CreateParams) -> Result<()> {
-    //     Ok(())
-    // }
+    pub fn buy(ctx: Context<Buy>, params: BuyParams) -> Result<()> {
+        let bonding_curve = &mut ctx.accounts.bonding_curve;
+
+        let from_account = &ctx.accounts.payer;
+        let to_account = &ctx.accounts.associated_bonding_curve;
+
+        let transfer_instruction = system_instruction::transfer(from_account.key, &to_account.key(), params.sol_in);
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_instruction,
+            &[
+                from_account.to_account_info(),
+                to_account.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[],
+        )?;
+
+        msg!("SOL transferred successfully.");
+
+        let from_ata = &ctx.accounts.associated_bonding_curve;
+        let to_ata = &ctx.accounts.associated_token_account;
+        let token_program = &ctx.accounts.token_program;
+        let authority = &ctx.accounts.payer;
+
+        let cpi_accounts = SplTransfer {
+            from: from_ata.to_account_info().clone(),
+            to: to_ata.to_account_info().clone(),
+            authority: authority.to_account_info().clone(),
+        };
+        let cpi_program = token_program.to_account_info();
+
+        token::transfer(
+            CpiContext::new(cpi_program, cpi_accounts),
+            params.token_out
+        )?;
+
+        msg!("Token transferred successfully.");
+
+        bonding_curve.virtual_token_reserves -= params.token_out;
+        bonding_curve.virtual_sol_reserves += params.sol_in;
+        bonding_curve.real_token_reserves -= params.token_out;
+        bonding_curve.real_sol_reserves += params.sol_in;
+
+        msg!("Bonding curve updated.");
+
+        let clock = Clock::get().unwrap();
+        let timestamp = clock.unix_timestamp;
+
+        emit!(TradeEvent{
+            mint: ctx.accounts.mint.key(),
+            sol_amount: params.sol_in,
+            token_amount: params.token_out,
+            is_buy: true,
+            user: ctx.accounts.payer.key(),
+            timestamp: timestamp,
+            virtual_token_reserves: bonding_curve.virtual_token_reserves,
+            virtual_sol_reserves: bonding_curve.virtual_sol_reserves
+        });
+
+        Ok(())
+    }
+
+    pub fn sell(ctx: Context<Sell>, params: SellParams) -> Result<()> {
+        let bonding_curve = &mut ctx.accounts.bonding_curve;
+
+        let from_account = &ctx.accounts.associated_bonding_curve;
+        let to_account = &ctx.accounts.payer;
+
+        let transfer_instruction = system_instruction::transfer(&from_account.key(), to_account.key, params.sol_out);
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_instruction,
+            &[
+                from_account.to_account_info(),
+                to_account.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[],
+        )?;
+
+        msg!("SOL transferred successfully.");
+
+        let from_ata = &ctx.accounts.associated_token_account;
+        let to_ata = &ctx.accounts.associated_bonding_curve;
+        let token_program = &ctx.accounts.token_program;
+        let authority = &ctx.accounts.mint;
+
+        let cpi_accounts = SplTransfer {
+            from: from_ata.to_account_info().clone(),
+            to: to_ata.to_account_info().clone(),
+            authority: authority.to_account_info().clone(),
+        };
+        let cpi_program = token_program.to_account_info();
+
+        token::transfer(
+            CpiContext::new(cpi_program, cpi_accounts),
+            params.token_in
+        )?;
+
+        msg!("Token transferred successfully.");
+
+        bonding_curve.virtual_token_reserves += params.token_in;
+        bonding_curve.virtual_sol_reserves -= params.sol_out;
+        bonding_curve.real_token_reserves += params.token_in;
+        bonding_curve.real_sol_reserves -= params.sol_out;
+
+        msg!("Bonding curve updated.");
+
+        let clock = Clock::get().unwrap();
+        let timestamp = clock.unix_timestamp;
+
+        emit!(TradeEvent{
+            mint: ctx.accounts.mint.key(),
+            sol_amount: params.sol_out,
+            token_amount: params.token_in,
+            is_buy: false,
+            user: ctx.accounts.payer.key(),
+            timestamp: timestamp,
+            virtual_token_reserves: bonding_curve.virtual_token_reserves,
+            virtual_sol_reserves: bonding_curve.virtual_sol_reserves
+        });
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -189,6 +322,54 @@ pub struct Create<'info> {
     pub program: Program<'info, DumpFun>
 }
 
+#[derive(Accounts)]
+#[instruction(params: BuyParams)]
+pub struct Buy<'info> {
+    #[account(mut, seeds = [b"mint", mint.key().as_ref()], bump)]
+    pub mint: Account<'info, Mint>,
+    #[account(mut, seeds = [b"bonding-curve", mint.key().as_ref()], bump)]
+    pub bonding_curve: Account<'info, BondingCurve>,
+    #[account(mut)]
+    pub associated_bonding_curve: Account<'info, TokenAccount>,
+    #[account(mut, seeds = [b"global"], bump)]
+    pub global: Account<'info, Global>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = payer
+    )]
+    pub associated_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub rent: Sysvar<'info, Rent>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub program: Program<'info, DumpFun>
+}
+
+#[derive(Accounts)]
+#[instruction(params: SellParams)]
+pub struct Sell<'info> {
+    #[account(mut, seeds = [b"mint", mint.key().as_ref()], bump)]
+    pub mint: Account<'info, Mint>,
+    #[account(mut, seeds = [b"bonding-curve", mint.key().as_ref()], bump)]
+    pub bonding_curve: Account<'info, BondingCurve>,
+    #[account(mut)]
+    pub associated_bonding_curve: Account<'info, TokenAccount>,
+    #[account(mut, seeds = [b"global"], bump)]
+    pub global: Account<'info, Global>,
+    #[account(mut)]
+    pub associated_token_account: Account<'info, TokenAccount>,
+    pub payer: Signer<'info>,
+    pub rent: Sysvar<'info, Rent>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub program: Program<'info, DumpFun>
+}
+
 #[account]
 pub struct Global {
     fee_recipient: Pubkey,
@@ -230,8 +411,20 @@ pub struct CreateParams {
     target: u64,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
+pub struct BuyParams {
+    sol_in: u64,
+    token_out: u64
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
+pub struct SellParams {
+    sol_out: u64,
+    token_in: u64
+}
+
 #[event]
-pub struct InitGlobalParamsEvent {
+pub struct InitEvent {
     fee_recipient: Pubkey,
     initial_virtual_token_reserves: u64,
     initial_virtual_sol_reserves: u64,
@@ -239,6 +432,28 @@ pub struct InitGlobalParamsEvent {
     initial_real_sol_reserves: u64,
     total_token_supply: u64,
     fee_basis_points: u64
+}
+
+#[event]
+pub struct CreateEvent {
+    name: String,
+    symbol: String,
+    uri: String,
+    mint: Pubkey,
+    bonding_curve: Pubkey,
+    user: Pubkey
+}
+
+#[event]
+pub struct TradeEvent {
+    mint: Pubkey,
+    sol_amount: u64,
+    token_amount: u64,
+    is_buy: bool,
+    user: Pubkey,
+    timestamp: i64,
+    virtual_token_reserves: u64,
+    virtual_sol_reserves: u64
 }
 
 impl Space for Global {
