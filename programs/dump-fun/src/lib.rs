@@ -19,10 +19,18 @@ declare_id!("3UQnAcGLoi8cpi9LkiJdjDnmkiW2n3LxgSosD9Cecs5P");
 pub mod dump_fun {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, params: InitParams) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let global = &mut ctx.accounts.global;
 
         global.initailized = true;
+
+        Ok(())
+    }
+
+    pub fn set(ctx: Context<Set>, params: GlobalParams) -> Result<()> {
+        let global = &mut ctx.accounts.global;
+        // require!(global.initailized, "");
+
         global.authority = params.authority;
         global.fee_recipient = params.fee_recipient;
         global.initial_virtual_token_reserves = params.initial_virtual_token_reserves;
@@ -49,6 +57,23 @@ pub mod dump_fun {
 
         let global = &mut ctx.accounts.global;
         let bonding_curve = &mut ctx.accounts.bonding_curve;
+
+        // let from_account = &ctx.accounts.payer;
+        // let to_account = global.fee_recipient;
+
+        // let transfer_instruction = system_instruction::transfer(from_account.key, &to_account.key(), global.fee_basis_points);
+
+        // anchor_lang::solana_program::program::invoke_signed(
+        //     &transfer_instruction,
+        //     &[
+        //         from_account.to_account_info(),
+        //         to_account.,
+        //         ctx.accounts.system_program.to_account_info(),
+        //     ],
+        //     &[],
+        // )?;
+
+        msg!("Fees transferred successfully.");
 
         let token_data: DataV2 = DataV2 {
             name: params.name.clone(),
@@ -195,7 +220,7 @@ pub mod dump_fun {
 
     pub fn sell(ctx: Context<Sell>, params: SellParams) -> Result<()> {
         let bonding_curve = &mut ctx.accounts.bonding_curve;
-        require_gt!(bonding_curve.real_sol_reserves, 0);
+        require_gt!(bonding_curve.real_sol_reserves, 70);
 
         let from_account = &ctx.accounts.associated_bonding_curve;
         let to_account = &ctx.accounts.payer;
@@ -265,6 +290,10 @@ pub mod dump_fun {
 
         Ok(())
     }
+
+    // pub fn withdraw(ctx: Context<Withdraw>, params: WithdrawParams) -> Result<()> {
+    //     Ok(())
+    // }
 }
 
 #[derive(Accounts)]
@@ -280,6 +309,20 @@ pub struct Initialize<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Set<'info> {
+    #[account(
+        mut,
+        seeds = [b"global"],
+        bump
+    )]
+    pub global: Account<'info, Global>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub program: Program<'info, DumpFun>
 }
 
 #[derive(Accounts)]
@@ -396,7 +439,7 @@ pub struct BondingCurve {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Debug, Clone)]
-pub struct InitParams {
+pub struct GlobalParams {
     authority: Pubkey,
     fee_recipient: Pubkey,
     initial_virtual_token_reserves: u64,
