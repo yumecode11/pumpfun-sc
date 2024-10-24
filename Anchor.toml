@@ -11,7 +11,7 @@ dump_fun = "3UQnAcGLoi8cpi9LkiJdjDnmkiW2n3LxgSosD9Cecs5P"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Devnet"
+cluster = "devnet"
 wallet = "/Users/benjichimex/.config/solana/id.json"
 
 [scripts]

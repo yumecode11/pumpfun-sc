@@ -29,7 +29,7 @@ pub mod dump_fun {
 
     pub fn set(ctx: Context<Set>, params: GlobalParams) -> Result<()> {
         let global = &mut ctx.accounts.global;
-        // require!(global.initailized, "");
+        require!(global.initailized, Errors::Initialization);
 
         global.authority = params.authority;
         global.fee_recipient = params.fee_recipient;
@@ -73,7 +73,7 @@ pub mod dump_fun {
         //     &[],
         // )?;
 
-        msg!("Fees transferred successfully.");
+        // msg!("Fees transferred successfully.");
 
         let token_data: DataV2 = DataV2 {
             name: params.name.clone(),
@@ -207,6 +207,8 @@ pub mod dump_fun {
         });
 
         if bonding_curve.real_sol_reserves >= bonding_curve.target {
+            bonding_curve.complete = true;
+
             emit!(CompleteEvent{
                 mint: ctx.accounts.mint.key(),
                 user: ctx.accounts.payer.key(),
@@ -280,6 +282,8 @@ pub mod dump_fun {
         });
 
         if bonding_curve.real_sol_reserves >= bonding_curve.target {
+            bonding_curve.complete = true;
+
             emit!(CompleteEvent{
                 mint: ctx.accounts.mint.key(),
                 user: ctx.accounts.payer.key(),
@@ -291,9 +295,55 @@ pub mod dump_fun {
         Ok(())
     }
 
-    // pub fn withdraw(ctx: Context<Withdraw>, params: WithdrawParams) -> Result<()> {
-    //     Ok(())
-    // }
+    pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
+        let bonding_curve = &mut ctx.accounts.bonding_curve;
+        require!(bonding_curve.complete, Errors::IncompleteBondingCurve);
+
+        let from_account = &ctx.accounts.associated_bonding_curve;
+        let to_account = &ctx.accounts.payer;
+
+        let transfer_instruction = system_instruction::transfer(&from_account.key(), to_account.key, bonding_curve.real_sol_reserves);
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_instruction,
+            &[
+                from_account.to_account_info(),
+                to_account.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[],
+        )?;
+
+        msg!("SOL withdrawn successfully.");
+
+        let from_ata = &ctx.accounts.associated_bonding_curve;
+        let to_ata = &ctx.accounts.associated_token_account;
+        let token_program = &ctx.accounts.token_program;
+        let authority = &ctx.accounts.mint;
+
+        let cpi_accounts = SplTransfer {
+            from: from_ata.to_account_info().clone(),
+            to: to_ata.to_account_info().clone(),
+            authority: authority.to_account_info().clone(),
+        };
+        let cpi_program = token_program.to_account_info();
+
+        token::transfer(
+            CpiContext::new(cpi_program, cpi_accounts),
+            bonding_curve.real_token_reserves
+        )?;
+
+        msg!("Token withdrawn successfully.");
+
+        bonding_curve.virtual_token_reserves = 0;
+        bonding_curve.virtual_sol_reserves = 0;
+        bonding_curve.real_token_reserves = 0;
+        bonding_curve.real_sol_reserves = 0;
+
+        msg!("Bonding curve updated.");
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -415,6 +465,26 @@ pub struct Sell<'info> {
     pub program: Program<'info, DumpFun>
 }
 
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut, seeds = [b"mint", mint.key().as_ref()], bump)]
+    pub mint: Account<'info, Mint>,
+    #[account(mut, seeds = [b"bonding-curve", mint.key().as_ref()], bump)]
+    pub bonding_curve: Account<'info, BondingCurve>,
+    #[account(mut)]
+    pub associated_bonding_curve: Account<'info, TokenAccount>,
+    #[account(mut, seeds = [b"global"], bump)]
+    pub global: Account<'info, Global>,
+    #[account(mut)]
+    pub associated_token_account: Account<'info, TokenAccount>,
+    pub payer: Signer<'info>,
+    pub rent: Sysvar<'info, Rent>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub program: Program<'info, DumpFun>
+}
+
 #[account]
 pub struct Global {
     initailized: bool,
@@ -515,4 +585,13 @@ impl Space for Global {
 
 impl Space for BondingCurve {
     const INIT_SPACE: usize = 8 + 8 + 8 + 8 + 8 + 8 + 1;
+}
+
+#[error_code]
+pub enum Errors {
+    #[msg("The global state is not yet initialized.")]
+    Initialization,
+
+    #[msg("The bonding curve is not yet complete.")]
+    IncompleteBondingCurve,
 }
