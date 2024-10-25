@@ -475,8 +475,14 @@ pub struct Withdraw<'info> {
     pub associated_bonding_curve: Account<'info, TokenAccount>,
     #[account(mut, seeds = [b"global"], bump)]
     pub global: Account<'info, Global>,
-    #[account(mut)]
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = payer
+    )]
     pub associated_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
     pub payer: Signer<'info>,
     pub rent: Sysvar<'info, Rent>,
     pub system_program: Program<'info, System>,
