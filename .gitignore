@@ -1,4 +1,4 @@
-
+.yarn
 .anchor
 .DS_Store
 target
@@ -6,4 +6,4 @@ target
 node_modules
 test-ledger
 .yarn
-.env
+id.json
