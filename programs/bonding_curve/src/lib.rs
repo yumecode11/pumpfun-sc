@@ -8,18 +8,18 @@ pub mod consts;
 
 use crate::instructions::*;
 
-declare_id!("7tZoQvzrjncZgVV7E97Zyy1wCA8ADPRpHhyhbsDsZT9A");
+declare_id!("4S2zffNkpjcyLdTqoTxpa6AtDb44ZUNVWFGCr8MsVcHX");
 
 #[program]
 pub mod bonding_curve {
     use super::*;
 
-    pub fn initialize(ctx: Context<InitializeCurveConfiguration>, fee: f64, target: f64) -> Result<()> {
-        instructions::initialize(ctx, fee, target)
+    pub fn initialize(ctx: Context<InitializeCurveConfiguration>, fee: f64) -> Result<()> {
+        instructions::initialize(ctx, fee)
     }
 
-    pub fn create_pool(ctx: Context<CreateLiquidityPool>) -> Result<()> {
-        instructions::create_pool(ctx)
+    pub fn create_pool(ctx: Context<CreateLiquidityPool>, target: u64) -> Result<()> {
+        instructions::create_pool(ctx, target)
     }
 
     pub fn add_liquidity(

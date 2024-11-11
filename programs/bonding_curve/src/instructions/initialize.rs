@@ -4,7 +4,6 @@ use anchor_lang::prelude::*;
 pub fn initialize(
     ctx: Context<InitializeCurveConfiguration>,
     fees: f64,
-    target: f64
 ) -> Result<()> {
     let dex_config = &mut ctx.accounts.dex_configuration_account;
 
@@ -12,11 +11,7 @@ pub fn initialize(
         return err!(CustomError::InvalidFee);
     }
 
-    if target < 1000000000_f64 {
-        return err!(CustomError::InvalidTarget);
-    }
-
-    dex_config.set_inner(CurveConfiguration::new(fees, target));
+    dex_config.set_inner(CurveConfiguration::new(fees));
 
     Ok(())
 }

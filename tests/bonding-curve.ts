@@ -126,7 +126,7 @@ describe("bonding_curve", () => {
           ComputeBudgetProgram.setComputeUnitLimit({ units: 10_000 }),
           ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1200_000 }),
           await program.methods
-            .initialize(1, 1 * LAMPORTS_PER_SOL)
+            .initialize(1)
             .accounts({
               dexConfigurationAccount: curveConfig,
               admin: user.publicKey,
@@ -161,7 +161,7 @@ describe("bonding_curve", () => {
           ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
           ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 200_000 }),
           await program.methods
-            .createPool()
+            .createPool(new BN(1 * LAMPORTS_PER_SOL))
             .accounts({
               pool: poolPda,
               tokenMint: mint1,

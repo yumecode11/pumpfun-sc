@@ -1,17 +1,22 @@
-use crate::state::*;
+use crate::{errors::CustomError, state::*};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{Mint, Token, TokenAccount},
 };
 
-pub fn create_pool(ctx: Context<CreateLiquidityPool>) -> Result<()> {
+pub fn create_pool(ctx: Context<CreateLiquidityPool>, target: u64) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
+
+    if target < 1000000000_u64 {
+        return err!(CustomError::InvalidTarget);
+    }
 
     pool.set_inner(LiquidityPool::new(
         ctx.accounts.payer.key(),
         ctx.accounts.token_mint.key(),
         ctx.bumps.pool,
+        target
     ));
     Ok(())
 }
